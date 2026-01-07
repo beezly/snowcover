@@ -232,13 +232,37 @@ If you provide an ONNX weather classification model at `models/weather_classifie
 
 ### Ground Coverage
 
-Analyzes a configurable region of the frame (typically the bottom 40%) for snow-like pixels:
+Analyzes a region of the frame for snow-like pixels. The ground region can be:
+- **Auto-detected** using ML segmentation (identifies roads, grass, sidewalks, etc.)
+- **Manually configured** as a polygon in the config
+
+Detection methods:
 - **Day mode**: HSV color analysis (high value, low saturation = white/snow)
 - **IR/Night mode**: Brightness-based detection (snow reflects IR strongly)
 
 ### IR/Night Mode Detection
 
 Automatically detects IR mode by checking color saturation of the frame. When saturation is very low (grayscale), it switches to IR-optimized algorithms.
+
+## ML Models (Optional)
+
+SnowCover can use ONNX models for improved detection. These are optional — the system works without them using fallback algorithms.
+
+### Ground Segmentation Model
+
+Automatically identifies ground regions (roads, grass, sidewalks, dirt, etc.) using semantic segmentation. This is more accurate than manually defining a polygon.
+
+```bash
+# Install dependencies and download the model
+pip install transformers optimum onnx onnxruntime
+python scripts/download_segmentation_model.py
+```
+
+This downloads [SegFormer-B0](https://huggingface.co/nvidia/segformer-b0-finetuned-ade-512-512) (~14MB) trained on ADE20K and exports it to `models/ground_segmentation.onnx`.
+
+### Weather Classification Model
+
+For snow intensity classification, you can provide a custom ONNX model at `models/weather_classifier.onnx`. Without it, intensity is estimated from particle density.
 
 ## Troubleshooting
 
