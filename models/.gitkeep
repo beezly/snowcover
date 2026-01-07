@@ -1,0 +1,5 @@
+# Place ONNX models here
+# The default expected model is: weather_classifier.onnx
+#
+# If no model is present, the system will fall back to
+# particle-based intensity estimation.

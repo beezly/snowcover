@@ -1,0 +1,52 @@
+services:
+  snowcover:
+    build: .
+    container_name: snowcover
+    restart: unless-stopped
+    environment:
+      # Camera configuration
+      - SNOWCOVER_CAMERA__ID=${CAMERA_ID:-front_camera}
+      - SNOWCOVER_CAMERA__RTSP_URL=${RTSP_URL:?RTSP_URL is required}
+      - SNOWCOVER_CAMERA__TRANSPORT=${RTSP_TRANSPORT:-tcp}
+
+      # MQTT configuration
+      - SNOWCOVER_MQTT__HOST=${MQTT_HOST:-localhost}
+      - SNOWCOVER_MQTT__PORT=${MQTT_PORT:-1883}
+      - SNOWCOVER_MQTT__USERNAME=${MQTT_USERNAME:-}
+      - SNOWCOVER_MQTT__PASSWORD=${MQTT_PASSWORD:-}
+
+      # Processing configuration
+      - SNOWCOVER_PROCESSING__FRAME_RATE=${FRAME_RATE:-1.0}
+
+      # Logging
+      - SNOWCOVER_LOGGING__LEVEL=${LOG_LEVEL:-INFO}
+      - SNOWCOVER_LOGGING__FORMAT=${LOG_FORMAT:-json}
+
+    volumes:
+      # Mount config file if using YAML configuration
+      - ./config:/app/config:ro
+      # Mount models directory for custom models
+      - ./models:/app/models:ro
+
+    # Use host network for easy access to local MQTT broker and cameras
+    # Change to bridge network if your setup requires it
+    network_mode: host
+
+    # Uncomment for GPU support (NVIDIA)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M

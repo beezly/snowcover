@@ -1,0 +1,112 @@
+# SnowCover Configuration Example
+# Copy this file to config.yaml and modify as needed
+
+# Camera Configuration
+camera:
+  # Unique identifier for this camera (used in MQTT topics and HA entity IDs)
+  id: "front_camera"
+
+  # RTSP stream URL from your camera
+  # Examples:
+  #   - rtsp://192.168.1.100:554/stream1
+  #   - rtsp://user:password@192.168.1.100:554/h264
+  rtsp_url: "rtsp://192.168.1.100:554/stream1"
+
+  # Transport protocol: tcp (more reliable) or udp (lower latency)
+  transport: "tcp"
+
+  # Reconnection settings
+  reconnect_delay: 5.0          # Seconds to wait before reconnecting
+  reconnect_max_attempts: 0     # 0 = infinite retries
+
+# Processing Configuration
+processing:
+  # How many frames per second to analyze (1-2 is usually sufficient)
+  frame_rate: 1.0
+
+  # Resolution for processing (smaller = faster, but may miss small particles)
+  width: 640
+  height: 480
+
+  # Number of frames to keep in buffer for temporal analysis
+  buffer_size: 10
+
+# Detection Configuration
+detection:
+  # Falling snow detection (particle analysis)
+  falling_snow:
+    enabled: true
+    min_particle_size: 2        # Minimum pixel area for a snow particle
+    max_particle_size: 20       # Maximum pixel area
+    min_particle_count: 50      # Particles needed to trigger "snowing"
+    brightness_threshold: 200   # Minimum brightness (0-255) for daytime
+    motion_threshold: 25        # Pixel difference threshold for motion
+
+    # IR/Night mode adjustments (automatically detected)
+    ir_brightness_threshold: 180  # Lower threshold for IR (snow reflects IR well)
+    ir_motion_threshold: 20       # More sensitive in IR mode
+
+  # Snow intensity classification
+  intensity:
+    enabled: true
+    # Path to ONNX model (optional - falls back to particle-based estimation)
+    model_path: "models/weather_classifier.onnx"
+    # Intensity category thresholds (percentage)
+    light_threshold: 10         # 0-10% = none, 10-40% = light
+    moderate_threshold: 40      # 40-70% = moderate
+    heavy_threshold: 70         # 70-100% = heavy
+
+  # Ground snow cover detection
+  ground_cover:
+    enabled: true
+    # Ground region as polygon (percentage of frame)
+    # Default covers bottom 40% of frame
+    # Points are [x, y] where 0,0 is top-left and 1,1 is bottom-right
+    ground_region:
+      - [0.0, 0.6]    # Top-left of ground region
+      - [1.0, 0.6]    # Top-right
+      - [1.0, 1.0]    # Bottom-right
+      - [0.0, 1.0]    # Bottom-left
+
+    # HSV thresholds for snow detection in color mode
+    # Snow is white: any hue, low saturation, high value
+    snow_hsv_lower: [0, 0, 200]     # [H, S, V] minimum
+    snow_hsv_upper: [180, 50, 255]  # [H, S, V] maximum
+
+    # Coverage threshold to trigger "ground has snow" binary sensor
+    coverage_threshold: 30  # percent
+
+    # IR/Night mode settings
+    ir_brightness_threshold: 180    # Brightness threshold for IR mode
+    ir_saturation_threshold: 15.0   # Max saturation to detect IR mode
+
+# Smoothing and Debouncing
+smoothing:
+  # Number of readings to average for smoothed values
+  window_size: 5
+
+  # Minimum percentage change to publish an update
+  change_threshold: 5.0
+
+  # Minimum seconds between boolean state changes (prevents flapping)
+  debounce_seconds: 10.0
+
+# MQTT Configuration
+mqtt:
+  host: "192.168.1.50"
+  port: 1883
+  username: ""                  # Leave empty if no authentication
+  password: ""
+  client_id: "snowcover"
+  keepalive: 60
+
+  # Home Assistant MQTT discovery prefix
+  discovery_prefix: "homeassistant"
+
+# Logging Configuration
+logging:
+  # Log level: DEBUG, INFO, WARNING, ERROR
+  level: "INFO"
+
+  # Log format: json (structured) or text (human-readable)
+  format: "json"
