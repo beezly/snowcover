@@ -73,6 +73,14 @@ class GroundCoverConfig(BaseModel):
         default=True,
         description="Automatically detect ground region using ML segmentation",
     )
+    auto_detect_frames: int = Field(
+        default=5,
+        description="Number of frames to average for auto-detection (more frames = more robust)",
+    )
+    auto_detect_consensus: float = Field(
+        default=0.5,
+        description="Fraction of frames that must agree for a pixel to be considered ground (0.0-1.0)",
+    )
     segmentation_model: str = Field(
         default="models/ground_segmentation.onnx",
         description="Path to ground segmentation ONNX model",

@@ -59,6 +59,9 @@ detection:
   # Ground snow cover detection
   ground_cover:
     enabled: true
+    # Auto-detection averages multiple frames for more robust results
+    auto_detect_frames: 5       # Number of frames to average (more = more robust, slower startup)
+    auto_detect_consensus: 0.5  # Fraction of frames that must agree (0.0-1.0)
     # Ground region as polygon (percentage of frame)
     # Default covers bottom 40% of frame
     # Points are [x, y] where 0,0 is top-left and 1,1 is bottom-right

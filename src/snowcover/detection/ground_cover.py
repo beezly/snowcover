@@ -49,6 +49,10 @@ class GroundCoverDetector:
         self._segmenter = None
         self._last_ir_mode: bool | None = None  # Track IR mode transitions
 
+        # Multi-frame averaging for auto-detection
+        self._pending_masks: list[np.ndarray] = []
+        self._auto_detect_complete: bool = False
+
         # Initialize auto-detection if enabled
         if config.auto_detect:
             self._init_segmenter()
@@ -109,12 +113,35 @@ class GroundCoverDetector:
 
         return mask
 
+    def _combine_masks(self, masks: list[np.ndarray]) -> np.ndarray:
+        """Combine multiple segmentation masks using consensus voting.
+
+        Args:
+            masks: List of binary masks from multiple frames
+
+        Returns:
+            Combined mask where pixels are ground if they appear in enough frames
+        """
+        if not masks:
+            return np.zeros((1, 1), dtype=np.uint8)
+
+        # Stack masks and count how many times each pixel is detected as ground
+        stacked = np.stack(masks, axis=0)
+        vote_count = np.sum(stacked > 0, axis=0)
+
+        # Pixel is ground if it appears in at least consensus fraction of frames
+        threshold = len(masks) * self.config.auto_detect_consensus
+        combined = (vote_count >= threshold).astype(np.uint8) * 255
+
+        return combined
+
     def _get_ground_mask(self, frame: np.ndarray, is_ir_mode: bool = False) -> np.ndarray:
         """Get or create the ground mask for the given frame size.
 
-        Uses auto-detection if available and in color mode.
-        If already auto-detected during daytime, keeps using that mask at night.
-        Falls back to manual polygon only if auto-detection has never succeeded.
+        Uses auto-detection if available and in color mode, averaging multiple
+        frames for more robust detection. If already auto-detected during daytime,
+        keeps using that mask at night. Falls back to manual polygon only if
+        auto-detection fails after collecting enough frames.
 
         Args:
             frame: Input frame
@@ -130,6 +157,8 @@ class GroundCoverDetector:
             self._ground_mask = None
             self._mask_shape = None
             self._auto_detected = False
+            self._pending_masks = []
+            self._auto_detect_complete = False
 
         # Return cached mask if available
         # This allows daytime-detected masks to be used at night
@@ -138,25 +167,59 @@ class GroundCoverDetector:
 
         # Try auto-detection, but only in color/daytime mode
         # The ML model was trained on RGB images and doesn't work well with IR/monochrome
-        if self._segmenter is not None and not is_ir_mode:
-            auto_mask = self._segmenter.detect_ground(frame, use_cache=True)
+        if self._segmenter is not None and not is_ir_mode and not self._auto_detect_complete:
+            # Set mask shape early so we don't reset pending masks on subsequent calls
+            if self._mask_shape is None:
+                self._mask_shape = frame_shape
+
+            # Don't use cache - we want fresh segmentation for each frame
+            auto_mask = self._segmenter.detect_ground(frame, use_cache=False)
+
             if auto_mask is not None:
-                # Validate that auto-detection found a reasonable ground region
-                ground_percent = (np.sum(auto_mask > 0) / auto_mask.size) * 100
-                if ground_percent >= 5.0:  # At least 5% of frame should be ground
-                    self._ground_mask = auto_mask
-                    self._mask_shape = frame_shape
-                    self._auto_detected = True
-                    self._log.info("Using auto-detected ground region", coverage_pct=round(ground_percent, 1))
-                    return self._ground_mask
+                self._pending_masks.append(auto_mask)
+                frames_needed = self.config.auto_detect_frames
+                frames_collected = len(self._pending_masks)
+
+                self._log.info(
+                    "Collecting ground detection frames",
+                    frames_collected=frames_collected,
+                    frames_needed=frames_needed,
+                )
+
+                # Check if we have enough frames to make a decision
+                if frames_collected >= frames_needed:
+                    # Combine masks using consensus voting
+                    combined_mask = self._combine_masks(self._pending_masks)
+                    self._pending_masks = []  # Clear pending masks
+                    self._auto_detect_complete = True
+
+                    # Validate that combined detection found a reasonable ground region
+                    ground_percent = (np.sum(combined_mask > 0) / combined_mask.size) * 100
+
+                    if ground_percent >= 5.0:  # At least 5% of frame should be ground
+                        self._ground_mask = combined_mask
+                        self._mask_shape = frame_shape
+                        self._auto_detected = True
+                        self._log.info(
+                            "Using auto-detected ground region (averaged)",
+                            coverage_pct=round(ground_percent, 1),
+                            frames_averaged=frames_needed,
+                            consensus_threshold=self.config.auto_detect_consensus,
+                        )
+                        return self._ground_mask
+                    else:
+                        self._log.warning(
+                            "Auto-detection found too little ground after averaging, falling back to manual",
+                            detected_pct=round(ground_percent, 1),
+                            frames_averaged=frames_needed,
+                        )
                 else:
-                    self._log.warning(
-                        "Auto-detection found too little ground, falling back to manual",
-                        detected_pct=round(ground_percent, 1),
-                    )
-        elif is_ir_mode and self._segmenter is not None:
+                    # Still collecting frames - use manual region temporarily
+                    return self._create_ground_mask(frame.shape)
+
+        elif is_ir_mode and self._segmenter is not None and not self._auto_detect_complete:
             self._log.info(
-                "In IR/night mode without cached ground mask - using manual region. "
+                "In IR/night mode - using manual region temporarily. "
                 "Ground will be auto-detected when camera switches to daytime mode."
             )
 
