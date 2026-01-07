@@ -50,6 +50,7 @@ docker-compose.local.yaml
 
 # Models (keep .gitkeep)
 models/*.onnx
+models/*.onnx.data
 models/*.pt
 models/*.pth
 !models/.gitkeep

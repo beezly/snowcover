@@ -37,8 +37,18 @@ class IntensityClassifier:
     Falls back to particle-based intensity estimation if no model is available.
     """
 
-    # Standard weather classification classes (for pre-trained models)
-    WEATHER_CLASSES = [
+    # Weather classification classes - supports multiple model formats
+    # HuggingFace prithivMLmods/Weather-Image-Classification model:
+    WEATHER_CLASSES_HF = [
+        "cloudy/overcast",
+        "foggy/hazy",
+        "rain/storm",
+        "snow/frosty",
+        "sun/clear",
+    ]
+
+    # Generic weather classification classes (legacy format)
+    WEATHER_CLASSES_GENERIC = [
         "clear",
         "cloudy",
         "fog",
@@ -47,6 +57,9 @@ class IntensityClassifier:
         "hail",
         "thunderstorm",
     ]
+
+    # Keywords that indicate snow in class names
+    SNOW_KEYWORDS = ["snow", "frosty", "hail", "sleet", "blizzard"]
 
     def __init__(self, config: IntensityConfig):
         """Initialize the intensity classifier.
@@ -59,6 +72,8 @@ class IntensityClassifier:
         self._session: "ort.InferenceSession | None" = None
         self._input_name: str | None = None
         self._input_shape: tuple | None = None
+        self._num_classes: int = 0
+        self._snow_class_idx: int | None = None
 
         # Try to load the model
         if config.enabled:
@@ -92,14 +107,52 @@ class IntensityClassifier:
             self._input_name = input_info.name
             self._input_shape = input_info.shape
 
+            # Get output details to determine number of classes
+            output_info = self._session.get_outputs()[0]
+            output_shape = output_info.shape
+            # Output is typically (batch, num_classes)
+            if len(output_shape) >= 2:
+                self._num_classes = output_shape[-1]
+            else:
+                self._num_classes = output_shape[0] if output_shape else 0
+
+            # Detect which class format this model uses and find snow class
+            self._snow_class_idx = self._find_snow_class_index()
+
             self._log.info(
-                "Loaded ONNX model",
+                "Loaded ONNX weather classification model",
                 model_path=str(model_path),
                 input_shape=self._input_shape,
+                num_classes=self._num_classes,
+                snow_class_idx=self._snow_class_idx,
             )
         except Exception as e:
             self._log.error("Failed to load ONNX model", error=str(e))
             self._session = None
+
+    def _find_snow_class_index(self) -> int | None:
+        """Determine the snow class index based on number of output classes.
+
+        Returns:
+            Index of the snow class, or None if unknown
+        """
+        # HuggingFace Weather-Image-Classification model has 5 classes
+        # snow/frosty is at index 3
+        if self._num_classes == 5:
+            self._log.debug("Detected HuggingFace weather model format (5 classes)")
+            return 3  # snow/frosty
+
+        # Generic 7-class weather model format
+        if self._num_classes == 7:
+            self._log.debug("Detected generic weather model format (7 classes)")
+            return 4  # snow
+
+        # Unknown format - will try to infer from probabilities
+        self._log.warning(
+            "Unknown model format - will use highest probability class",
+            num_classes=self._num_classes,
+        )
+        return None
 
     @property
     def model_available(self) -> bool:
@@ -164,35 +217,40 @@ class IntensityClassifier:
         exp_logits = np.exp(logits - np.max(logits))
         probs = exp_logits / exp_logits.sum()
 
-        # Find snow class probability (if available)
-        snow_idx = None
-        for i, cls in enumerate(self.WEATHER_CLASSES):
-            if cls == "snow" and i < len(probs):
-                snow_idx = i
-                break
+        # Get the predicted class
+        pred_class = int(np.argmax(probs))
+        pred_confidence = float(probs[pred_class])
 
-        if snow_idx is not None:
-            snow_prob = probs[snow_idx]
-            confidence = float(snow_prob)
+        # Use pre-detected snow class index if available
+        if self._snow_class_idx is not None and self._snow_class_idx < len(probs):
+            snow_prob = float(probs[self._snow_class_idx])
 
-            # Map snow probability to intensity
+            # Map snow probability to intensity (0-100%)
             intensity_percent = int(min(100, snow_prob * 100))
+            confidence = snow_prob
         else:
-            # Fallback: use highest probability class
-            pred_class = int(np.argmax(probs))
-            confidence = float(probs[pred_class])
+            # Unknown model format - check if predicted class looks like snow
+            # by checking if it's above a threshold
+            confidence = pred_confidence
+            intensity_percent = 0
 
-            # Simple mapping: non-snow = 0%, snow detected = scale by confidence
-            if pred_class < len(self.WEATHER_CLASSES):
-                if self.WEATHER_CLASSES[pred_class] in ["snow", "hail"]:
-                    intensity_percent = int(confidence * 100)
-                else:
-                    intensity_percent = 0
-            else:
-                intensity_percent = 0
+            # If we have high confidence in any class, assume it might be snow
+            # if the probability distribution suggests it
+            if pred_confidence > 0.5:
+                # Assume the model is predicting snow if confidence is high
+                # This is a fallback for unknown model formats
+                intensity_percent = int(pred_confidence * 100)
 
-        # Determine category
+        # Determine category based on intensity
         category = self._percent_to_category(intensity_percent)
+
+        self._log.debug(
+            "Weather classification result",
+            predicted_class=pred_class,
+            snow_probability=probs[self._snow_class_idx] if self._snow_class_idx else None,
+            intensity_percent=intensity_percent,
+            category=category,
+        )
 
         return IntensityResult(
             intensity_percent=intensity_percent,
